@@ -1,0 +1,176 @@
+---
+title: "Predicting Performance of Physical Activities"
+author: "Rodolfo Akio Uchida"
+date: "April 3, 2016"
+output: html_document
+---
+
+## Executive Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Packages 
+
+All the R packages used in this report are listed below:
+
+```{r,message = F, warning=F} 
+library(caret)
+library(rpart.plot)
+library(rattle)
+library(rpart)
+library(Amelia)
+```
+
+
+## Data processing
+
+The data for this analysis was downloaded from the website and copied to the main directory of R. The code used to load the .csv files in R are shown below:
+
+```{r}
+train <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!",""))
+test <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!",""))
+```
+
+First, we take a look to see general features of the test and train sets
+
+
+```{r, results= "hide"}
+str(train)
+str(test)
+```
+
+The results are too large to be displayed but they show that some columns have lots of missing values, in order to visually see those missing values in the test set we use the Amelia package 
+
+```{r}
+missmap(test, main = "Missing values", rank.order = F)  
+```
+
+The plot above shows that some columns have no values whatsoever, the strategy to get rid of those observations is to create a vector and assign to each components the percentage of NA's values and them delete the columns that have 80% or more missing values 
+
+```{r}
+percent_na <- as.vector(sapply(test, function(x) sum(is.na(x))/nrow(test)))
+percent_na
+na <- which(percent_na > 0.8)
+test <- test[,-na]
+```
+
+Since the prediction will be in the test set the features to create the model in the training set must be selected according to the test set, so we match those features 
+
+```{r}
+m <- match(names(test),names(train))
+m
+```
+
+The feature 60 is not in the training set, we delete these variable and select the test set columns in the training set to create de model
+
+```{r}
+test <- test[,-60]
+train <- train[,c(names(test), "classe")]
+```
+
+Note that are not NA's values anymore in the training set
+
+```{r}
+missmap(train, main = "Missing values vs observed", rank.order = F)  
+```
+
+Now we will preprocess the training set, first lets get rid of correlated variables:
+
+```{r}
+num <- as.vector(sapply(train, function(x) is.numeric(x)))
+corr_M <- abs(cor(train[,num]))
+remove = findCorrelation(corr_M, cutoff = .90, verbose = TRUE)
+train = train[,-remove]
+```
+
+Seven correlated variables were removed from the training set
+
+For last, variables with near zero variance should be not considered in the model that we are going to build
+
+```{r}
+num <- as.vector(sapply(train, function(x) is.numeric(x)))
+zeroVar <- nearZeroVar(train[,num], saveMetrics = TRUE)
+```
+
+The results show no such variables 
+
+
+## Cross validation
+
+The training set represented by the variable "train" is divided into training and testing set. We shall create classification models and test the sample error in the testing set and the out of sample error in the test set
+
+```{r}
+inTrain <- createDataPartition(train$classe, p=0.6, list=FALSE)
+training <- train[inTrain,]
+testing <- train[-inTrain,]
+```
+
+## Classification Models
+
+The variable to be predicted in "Classe" which is a categorical variable, for this reason we are going to build two classification models based on trees, the first one will be a very simple classification tree and the second one a random forest. 
+
+### Classification Tree
+
+
+Since the dataset have a reasonable amount of variables and therefore making the creation of models quite complex we first construct a unique classification tree and assess the accuracy and purity of the leafs, if the accuracy in this model is bigger than .90 it is not necessary to build a random forest. Although the expectations is a large impurity is the leafs leading to a low accuracy and high out of sample error.
+
+```{r}
+set.seed(33833)
+mod_ct <- train(classe ~ ., data = training[,c(-1,-2)], method = "rpart") ## Names and number of observations are not relevant 
+fancyRpartPlot(mod_ct$finalModel)
+```
+
+As we predict the impurity in the leafs are quite high, lets estimate the out of sample error using the testing set
+
+```{r}
+pred1 <- predict(mod_ct, testing)
+cm_ct <- confusionMatrix(pred1, testing$classe)
+cm_ct
+```
+
+Since the accuracy is low we have to construct a random forest 
+
+### Random Forest
+
+A Random Forest will be construct to increase accuracy in the model, we shall bootstrap 100 times the training set to create a tree for each sample and average the results. The expectations is a much higher accuracy leading to a lower error in the test set
+
+```{r}
+set.seed(37877)
+mod_rf <- train(classe ~ ., data = training[,c(-1,-2)], method = "rf", ntree = 100)
+```
+
+Now estimate the out of sample error using the testing set:
+
+```{r}
+pred2 <- predict(mod_rf, testing)
+cm_rf <- confusionMatrix(pred2, testing$classe)
+cm_rf
+```
+
+The confusion matrix show a very high accuracy in the random forest model, therefore this model will be selected to predict the values in the test set 
+
+### Predicting new values
+
+Finally we use the cm_rf model in the test set to predict the "Classe" variable 
+
+```{r}
+predict(mod_rf, test)
+```
+
+
+
+
+
+
